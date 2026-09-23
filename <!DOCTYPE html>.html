@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit=cover: respeita o "notch" e áreas seguras do iPhone -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Fluxo Dual — Recepção Sem Fila | Clínica Saúde+</title>
+
+  <!-- Tailwind CDN (protótipo). Em produção: build estático do Tailwind. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:'#eff6ff', 100:'#dbeafe', 500:'#2563eb', 600:'#1d4ed8', 700:'#1e40af' },
+          },
+          boxShadow: { soft: '0 10px 30px -12px rgba(15, 23, 42, .25)' },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* Design system mínimo: alvos de toque grandes e foco visível (acessibilidade) */
+    :root { --tap: 60px; }
+    * { -webkit-tap-highlight-color: rgba(37, 99, 235, .20); }
+
+    .btn {
+      min-height: var(--tap);
+      transition: transform .12s ease, box-shadow .12s ease, background-color .15s ease;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn:focus-visible,
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    label:focus-visible {
+      outline: 3px solid #1d4ed8;
+      outline-offset: 3px;
+    }
+
+    /* Transição entre os 4 estados do fluxo */
+    .screen { display: none; animation: enter .28s ease both; }
+    .screen.is-active { display: flex; }
+    @keyframes enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    /* Loader de OCR */
+    .ocr-bar { animation: ocr 2s linear forwards; }
+    @keyframes ocr { from { width: 4%; } to { width: 100%; } }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Barra do painel de métricas (15 min -> 2 min) */
+    .metric-bar { animation: grow .9s cubic-bezier(.2,.8,.2,1) both; }
+    @keyframes grow { from { width: 0; } }
+
+    /* Respeita quem prefere menos movimento */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+
+    .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  </style>
+</head>
+
+<body class="bg-slate-200 text-slate-900 antialiased">
+  <!-- ============ APP SHELL (mobile-first, máx. 480px centralizado no desktop) ============ -->
+  <div id="app" class="mx-auto flex min-h-screen w-full max-w-md flex-col bg-slate-50 shadow-2xl sm:my-6 sm:min-h-[calc(100vh-3rem)] sm:rounded-3xl sm:overflow-hidden">
+
+    <!-- Header persistente -->
+    <header class="flex items-center justify-between gap-3 bg-slate-900 px-5 py-4 text-white">
+      <div class="flex items-center gap-2">
+        <span class="grid h-9 w-9 place-items-center rounded-xl bg-brand-500 text-lg" aria-hidden="true">✚</span>
+        <div class="leading-tight">
+          <p class="text-sm font-bold">Clínica Saúde+</p>
+          <p class="text-[11px] text-slate-300">Recepção sem fila</p>
+        </div>
+      </div>
+      <!-- Indicador de passo (1 de 1 no check-in) -->
+      <span id="stepBadge" class="hidden rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">Passo único</span>
+    </header>
+
+    <main id="screens" class="flex flex-1 flex-col">
+
+      <!-- ================= ESTADO 1 — TELA INICIAL (A Dupla Rota) ================= -->
+      <section id="screen-home" class="screen is-active flex-col justify-center gap-6 px-5 py-8" aria-labelledby="home-title">
+        <div class="text-center">
+          <p class="mb-3 text-5xl" aria-hidden="true">🏥</p>
+          <h1 id="home-title" class="text-2xl font-extrabold leading-snug text-slate-900">
+            Bem-vindo à Clínica Saúde+.
+            <span class="block text-brand-700">Como podemos te ajudar hoje?</span>
+          </h1>
+          <p class="mt-3 text-base text-slate-600">Escolha uma rota. Leva menos de 1 minuto.</p>
+        </div>
+
+        <!-- Botões grandes: alvo de toque mínimo de 64px, alto contraste -->
+        <div class="flex flex-col gap-4">
+          <button id="btnRota1"
+                  class="btn flex w-full flex-col items-start gap-1 rounded-2xl bg-brand-600 px-5 py-5 text-left text-white shadow-soft hover:bg-brand-700">
+            <span class="text-xl font-extrabold">🚀 Fazer sozinho (Rápido)</span>
+            <span class="text-sm text-blue-100">Escaneie sua carteirinha e entre direto.</span>
+          </button>
+
+          <button id="btnRota2"
+                  class="btn flex w-full flex-col items-start gap-1 rounded-2xl border-2 border-slate-900 bg-white px-5 py-5 text-left text-slate-900 shadow-soft hover:bg-slate-100">
+            <span class="text-xl font-extrabold">🙋‍♀️ Quero ajuda da recepção</span>
+            <span class="text-sm text-slate-600">Chama um atendente humano agora.</span>
+          </button>
+        </div>
+
+        <p class="text-center text-sm text-slate-500">⏱ Tempo médio de espera hoje: <strong class="text-slate-800">2 min</strong></p>
+      </section>
+
+      <!-- ================= ESTADO 2 — CHECK-IN RÁPIDO (Rota 1) ================= -->
+      <section id="screen-checkin" class="screen flex-col gap-5 px-5 py-6" aria-labelledby="checkin-title" hidden>
+        <div>
+          <p class="text-sm font-bold uppercase tracking-wide text-brand-700">Rota 1 · Autoatendimento</p>
+          <h2 id="checkin-title" class="mt-1 text-2xl font-extrabold text-slate-900">Check-in rápido</h2>
+          <p class="mt-1 text-base text-slate-600">Escaneie a foto do documento ou da carteirinha do convênio.</p>
+        </div>
+
+        <!-- Área de captura/upload do documento -->
+        <div class="rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-center shadow-sm">
+          <div id="docPreview" class="mx-auto mb-3 grid h-36 w-full place-items-center overflow-hidden rounded-xl bg-slate-100 text-4xl text-slate-400">
+            🪪
+          </div>
+
+          <!-- capture="environment" abre a câmera traseira no celular; no desktop abre o seletor de arquivos -->
+          <input id="docInput" type="file" accept="image/*" capture="environment" class="sr-only" aria-label="Enviar foto do documento" />
+          <label for="docInput"
+                 class="btn inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700">
+            📷 Enviar / tirar foto do documento
+          </label>
+          <p id="fileName" class="mt-2 truncate text-xs text-slate-500">Nenhuma imagem selecionada (opcional no protótipo)</p>
+        </div>
+
+        <!-- Botão principal de OCR -->
+        <button id="btnScan"
+                class="btn w-full rounded-2xl bg-brand-600 px-5 py-4 text-lg font-extrabold text-white shadow-soft hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60">
+          🔎 Escanear documento
+        </button>
+
+        <!-- Loader OCR (2s) — oculto por padrão -->
+        <div id="ocrLoader" class="hidden rounded-2xl bg-brand-50 p-4 ring-1 ring-brand-100" role="status" aria-live="polite">
+          <div class="flex items-center gap-3">
+            <span class="spin h-5 w-5 rounded-full border-[3px] border-brand-200 border-t-brand-600" aria-hidden="true"></span>
+            <p id="ocrStep" class="text-sm font-semibold text-brand-700">Lendo documento via OCR...</p>
+          </div>
+          <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-brand-100">
+            <div class="ocr-bar h-full rounded-full bg-brand-600"></div>
+          </div>
+        </div>
+
+        <!-- Campos extraídos (pré-preenchidos pelo OCR) -->
+        <div id="extractedCard" class="hidden rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200" aria-live="polite">
+          <p class="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-700">✅ Dados reconhecidos — confira antes de confirmar</p>
+          <dl class="divide-y divide-slate-100 text-[15px]">
+            <div class="flex items-center justify-between gap-3 py-2.5">
+              <dt class="text-slate-500">Nome</dt><dd id="fNome" class="font-bold text-slate-900">—</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2.5">
+              <dt class="text-slate-500">Convênio</dt><dd id="fConvenio" class="font-bold text-slate-900">—</dd>
+            </div>
+            <div class="flex items-center justify-between gap-3 py-2.5">
+              <dt class="text-slate-500">Consulta</dt><dd id="fConsulta" class="font-bold text-slate-900">—</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- Erro inline de validação -->
+        <p id="checkinError" class="hidden rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200" role="alert"></p>
+
+        <div class="mt-auto flex flex-col gap-3 pb-2">
+          <button id="btnConfirm"
+                  class="btn w-full rounded-2xl bg-emerald-600 px-5 py-4 text-lg font-extrabold text-white shadow-soft hover:bg-emerald-700">
+            ✔ Confirmar e Finalizar
+          </button>
+
+          <!-- Saída de emergência sempre visível (UX para idosos / ansiedade) -->
+          <button id="btnHelpInline" class="btn w-full rounded-2xl border-2 border-slate-300 bg-white px-5 py-3 font-bold text-slate-800 hover:bg-slate-100">
+            🙋‍♀️ Prefiro ajuda da recepção
+          </button>
+        </div>
+      </section>
+
+      <!-- ============ ESTADO 4 — SUCESSO / SUPORTE ACIONADO ============ -->
+      <section id="screen-final" class="screen flex-col gap-5 px-5 py-8" aria-labelledby="final-title" hidden>
+        <div class="rounded-2xl bg-white p-6 text-center shadow-soft ring-1 ring-slate-200">
+          <p id="finalEmoji" class="mb-3 text-5xl" aria-hidden="true">🙌</p>
+          <h2 id="final-title" class="text-xl font-extrabold leading-snug text-slate-900">
+            Sua solicitação foi enviada à recepção. Alguém virá te atender em instantes (ou abra o chat abaixo).
+          </h2>
+          <p id="finalSub" class="mt-3 text-base text-slate-600">Fique onde está — você é o próximo da nossa lista.</p>
+
+          <div class="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 ring-1 ring-emerald-200">
+            <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true"></span>
+            Atendente notificado · Protocolo <span id="protocolo">#SG-2048</span>
+          </div>
+        </div>
+
+        <!-- Chat simulado -->
+        <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <p class="mb-2 text-sm font-bold text-slate-800">💬 Chat com a recepção</p>
+          <div id="chatLog" class="max-h-40 space-y-2 overflow-y-auto text-sm" aria-live="polite">
+            <p class="w-fit rounded-2xl rounded-tl-sm bg-slate-100 px-3 py-2 text-slate-800">Ola! Sou a Ana, da recepção. Já estou a caminho. 🙂</p>
+          </div>
+          <form id="chatForm" class="mt-3 flex gap-2">
+            <input id="chatInput" type="text" placeholder="Escreva sua dúvida..."
+                   class="min-h-[44px] flex-1 rounded-xl border border-slate-300 px-3 text-base outline-none focus:border-brand-600" />
+            <button class="btn rounded-xl bg-slate-900 px-4 font-bold text-white hover:bg-slate-700" type="submit">Enviar</button>
+          </form>
+        </div>
+
+        <button id="btnBackHome" class="btn w-full rounded-2xl border-2 border-slate-300 bg-white px-5 py-3 font-bold text-slate-800 hover:bg-slate-100">
+          ← Voltar ao início
+        </button>
+
+        <!-- Painel de valor da PoC (métrica) -->
+        <div class="mt-auto rounded-2xl bg-slate-900 p-5 text-white shadow-soft safe-bottom">
+          <p class="text-[11px] font-bold uppercase tracking-widest text-slate-400">Métrica da PoC</p>
+          <p class="mt-1 text-lg font-extrabold leading-snug">Tempo médio de recepção otimizado</p>
+
+          <div class="mt-4 space-y-3">
+            <div>
+              <div class="flex items-baseline justify-between text-sm">
+                <span class="text-slate-400">Antes (fila física)</span>
+                <span class="font-extrabold line-through decoration-red-400 decoration-2">15 min</span>
+              </div>
+              <div class="mt-1 h-3 w-full overflow-hidden rounded-full bg-white/10">
+                <div class="metric-bar h-full w-full rounded-full bg-red-400"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-baseline justify-between text-sm">
+                <span class="text-slate-400">Agora (Fluxo Dual)</span>
+                <span class="font-extrabold text-emerald-400">2 min</span>
+              </div>
+              <div class="mt-1 h-3 w-full overflow-hidden rounded-full bg-white/10">
+                <div class="metric-bar h-full rounded-full bg-emerald-400" style="width:13.3%"></div>
+              </div>
+            </div>
+          </div>
+
+          <p class="mt-4 text-xs text-slate-400">−87% de tempo de espera · dados sintéticos da demonstração</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================= ESTADO 3 — MODAL DE INÊRCIA (anti-travamento, 10s) ================= -->
+    <div id="inertiaModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/70 px-5 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="inertiaTitle">
+      <div class="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl" role="document">
+        <p class="mb-3 text-4xl" aria-hidden="true">☕</p>
+        <h2 id="inertiaTitle" class="text-lg font-extrabold leading-snug text-slate-900">
+          Notamos que você demorou um pouco. Quer que a recepção te ajude agora?
+        </h2>
+        <p class="mt-2 text-sm text-slate-600">Sem pressa — podemos assumir daqui.</p>
+
+        <div class="mt-5 flex flex-col gap-3">
+          <button id="inertiaYes" class="btn w-full rounded-2xl bg-brand-600 px-4 py-4 text-base font-extrabold text-white hover:bg-brand-700">
+            Sim, chamar atendente
+          </button>
+          <button id="inertiaNo" class="btn w-full rounded-2xl border-2 border-slate-300 bg-white px-4 py-4 text-base font-bold text-slate-800 hover:bg-slate-100">
+            Continuar sozinho
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast: chamada humana imediata (rota 2) -->
+    <div id="toast" class="pointer-events-none fixed inset-x-0 top-4 z-40 flex justify-center px-5 opacity-0 transition-all duration-300 -translate-y-3" role="status" aria-live="polite">
+      <div class="flex items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white shadow-2xl">
+        <span class="grid h-8 w-8 place-items-center rounded-full bg-emerald-500" aria-hidden="true">✓</span>
+        <span id="toastMsg">Atendente chamado</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ============================================================================
+ * FLUXO DUAL — RECEPÇÃO SEM FÍLA
+ * Protótipo SPA: 4 estados controlados por uma máquina de estados simples.
+ *
+ * >>> PONTOS DE INTEGRAÇÃO COM SERVIÇOS REAIS (marcados com [INTEGRAÇÃO]):
+ *   1. [INTEGRAÇÃO · OCR]      -> linha ~"simularOCR()": substituir o setTimeout
+ *                                 por OCI Document Understanding / Vision (Oracle),
+ *                                 AWS Textract ou Google Document AI.
+ *   2. [INTEGRAÇÃO · CHAT]     -> linha ~"enviarMensagem()": substituir a resposta
+ *                                 mockada por WebSocket/SSE para o backend da recepção.
+ *   3. [INTEGRAÇÃO · CHAMADA]  -> linha ~"acionarRecepcao()": POST para a fila de
+ *                                 atendimento (ex.: serviço de push para o tablet da recepção).
+ *   4. [INTEGRAÇÃO · ANALYTICS]-> linha ~"registrarEvento()": enviar métricas reais
+ *                                 (tempo de espera, abandono) para o painel da PoC.
+ * ========================================================================== */
+
+const INERCIA_MS = 10_000; // 10 segundos de inatividade -> modal empático
+
+const state = { screen: 'home', scanned: false, supportMode: false, modalOpen: false, busy: false };
+
+const $ = (id) => document.getElementById(id);
+const screens = { home: $('screen-home'), checkin: $('screen-checkin'), final: $('screen-final') };
+
+/* ---------- Navegação entre estados ---------- */
+function goTo(name) {
+  clearInertia();
+  Object.entries(screens).forEach(([key, el]) => {
+    const active = key === name;
+    el.classList.toggle('is-active', active);
+    el.hidden = !active; // acessibilidade: telas ocultas saem da ordem de tabulação
+  });
+  state.screen = name;
+  $('stepBadge').classList.toggle('hidden', name !== 'checkin');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  if (name === 'checkin') resetInertia(); // o timer só corre no fluxo de check-in
+}
+
+/* ---------- Toast visual (feedback imediato) ---------- */
+let toastTimer;
+function toast(msg, ms = 1800) {
+  $('toastMsg').textContent = msg;
+  const t = $('toast');
+  t.classList.remove('opacity-0', '-translate-y-3');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('opacity-0', '-translate-y-3'), ms);
+}
+
+/* ---------- 4. Tela de Sucesso / Suporte acionado ---------- */
+function acionarRecepcao({ support = true } = {}) {
+  state.supportMode = support;
+
+  // [INTEGRAÇÃO · CHAMADA] Chamada real aqui, ex.:
+  //   await fetch('/api/recepcao/chamar', { method:'POST', body: JSON.stringify({ clinicId, patientId, ts: Date.now() }) });
+  // que dispara push/WebSocket para o tablet da recepção e abre o chat.
+  registrarEvento(support ? 'suporte_solicitado' : 'checkin_concluido');
+
+  $('finalEmoji').textContent = support ? '🙌' : '🎉';
+  $('final-title').textContent = support
+    ? 'Sua solicitação foi enviada à recepção. Alguém virá te atender em instantes (ou abra o chat abaixo).'
+    : 'Check-in concluído! Você já está na lista da recepção.';
+  $('finalSub').textContent = support
+    ? 'Fique onde está — você é o próximo da nossa lista.'
+    : 'Chegue com antecedência à sala indicada na tela da recepção.';
+  $('protocolo').textContent = '#SG-' + Math.floor(2000 + Math.random() * 8000);
+
+  goTo('final');
+}
+
+/* ---------- Rota 2: chamada humana imediata (Tela 1) ---------- */
+function rotaAjuda() {
+  toast('🔔 Recepcionista Ana foi chamada...');
+  setTimeout(() => acionarRecepcao({ support: true }), 900); // UX: deixa o usuário ler o toast
+}
+
+/* ---------- Simulação de OCR (2s) ---------- */
+async function simularOCR() {
+  if (state.busy) return;
+  state.busy = true;
+  $('btnScan').disabled = true;
+  $('checkinError').hidden = true;
+  $('ocrLoader').classList.remove('hidden');
+
+  const steps = ['Otimizando imagem...', 'Lendo documento via OCR...', 'Consultando convênio...'];
+  for (const s of steps) { $('ocrStep').textContent = s; await wait(666); }
+
+  /* [INTEGRAÇÃO · OCR] >>> SUBSTITUIR PELO SERVIÇO REAL <<<
+   * Ex.: Oracle OCI Document Understanding (DetectText / DetectObjects)
+   *   const result = await ociDocumentUnderstanding.analyzeGeneral(
+   *     { image: fileBase64, features: [{ featureType: 'TEXT' }] });
+   *   const dados = extrairCampos(result.pages[0].words);  // nome, convênio, agendamento
+   *
+   * No protótipo: dados sintéticos (fake-til-ready).
+   */
+  preencherCampos({
+    nome: 'Maria Silva',
+    convenio: 'Saúde Total',
+    consulta: 'Hoje, 14:30 com Dr. Carlos',
+  });
+
+  $('ocrLoader').classList.add('hidden');
+  $('extractedCard').classList.remove('hidden');
+  state.scanned = true;
+  state.busy = false;
+  $('btnScan').disabled = false;
+  $('btnScan').textContent = '🔁 Escanear novamente';
+  toast('Documento lido com sucesso!');
+}
+
+function preencherCampos(d) {
+  $('fNome').textContent = d.nome;
+  $('fConvenio').textContent = d.convenio;
+  $('fConsulta').textContent = d.consulta;
+}
+
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ---------- Sistema proativo de inércia (anti-travamento) ---------- */
+let idleTimer = null;
+
+function resetInertia() {
+  clearTimeout(idleTimer);
+  // O timer só existe dentro do fluxo de check-in e apenas com o modal fechado.
+  if (state.screen !== 'checkin' || state.modalOpen) return;
+  idleTimer = setTimeout(openInertiaModal, INERCIA_MS);
+}
+function clearInertia() { clearTimeout(idleTimer); }
+
+function openInertiaModal() {
+  state.modalOpen = true;
+  clearInertia();
+  const m = $('inertiaModal');
+  m.classList.remove('hidden');
+  m.classList.add('flex');
+  $('inertiaYes').focus(); // foco inicial para leitores de tela / teclado
+}
+
+function closeInertiaModal() {
+  state.modalOpen = false;
+  const m = $('inertiaModal');
+  m.classList.add('hidden');
+  m.classList.remove('flex');
+  resetInertia(); // reinicia a contagem ao voltar para o fluxo
+}
+
+/* Qualquer interação reinicia os 10s */
+['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(evt =>
+  document.addEventListener(evt, () => { if (state.screen === 'checkin') resetInertia(); }, { passive: true })
+);
+
+/* ---------- Chat simulado ---------- */
+function enviarMensagem(texto) {
+  const log = $('chatLog');
+  log.insertAdjacentHTML('beforeend',
+    `<p class="ml-auto w-fit max-w-[80%] rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-2 text-white">${escapeHtml(texto)}</p>`);
+  log.scrollTop = log.scrollHeight;
+
+  /* [INTEGRAÇÃO · CHAT] >>> SUBSTITUIR PELO SERVIÇO REAL <<<
+   *   const ws = new WebSocket('wss://api.saudeplus.chat/sessao/' + protocolo);
+   *   ws.send(JSON.stringify({ texto, patientId }));
+   *   ws.onmessage = (e) => renderBubble(JSON.parse(e.data).reply);
+   * Também é aqui que entraria um chatbot + transferência para humano.
+   */
+  setTimeout(() => {
+    const reply = 'Perfeito! Já registrei aqui. Pode ficar tranquilo(a), o Dr. Carlos está no horário. 👍';
+    log.insertAdjacentHTML('beforeend',
+      `<p class="w-fit max-w-[80%] rounded-2xl rounded-tl-sm bg-slate-100 px-3 py-2 text-slate-800">${reply}</p>`);
+    log.scrollTop = log.scrollHeight;
+  }, 1000);
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+/* [INTEGRAÇÃO · ANALYTICS] Métricas reais da PoC aqui (tempo por etapa, abandono). */
+function registrarEvento(nome, payload = {}) {
+  console.log('[analytics]', nome, { screen: state.screen, ts: Date.now(), ...payload });
+}
+
+/* ============================== LIGAÇÕES DE UI ============================== */
+
+// Tela 1
+$('btnRota1').addEventListener('click', () => { registrarEvento('rota_autoatendimento'); goTo('checkin'); });
+$('btnRota2').addEventListener('click', () => { registrarEvento('rota_recepcao'); rotaAjuda(); });
+
+// Tela 2 — upload/captura
+$('docInput').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  $('fileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    $('docPreview').innerHTML = `<img src="${ev.target.result}" alt="Pré-visualização do documento" class="h-36 w-full object-cover" />`;
+  };
+  reader.readAsDataURL(file);
+  resetInertia();
+});
+
+$('btnScan').addEventListener('click', simularOCR);
+
+$('btnConfirm').addEventListener('click', () => {
+  if (!state.scanned) { // validação: exige OCR antes de finalizar
+    const err = $('checkinError');
+    err.textContent = '⚠️ Escaneie o documento antes de confirmar.';
+    err.classList.remove('hidden');
+    resetInertia();
+    return;
+  }
+  acionarRecepcao({ support: false });
+});
+
+$('btnHelpInline').addEventListener('click', rotaAjuda);
+
+// Modal de inércia
+$('inertiaYes').addEventListener('click', () => { closeInertiaModal(); acionarRecepcao({ support: true }); });
+$('inertiaNo').addEventListener('click', closeInertiaModal);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.modalOpen) closeInertiaModal(); // Esc = "continuar sozinho"
+});
+
+// Tela final
+$('chatForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('chatInput');
+  const txt = input.value.trim();
+  if (!txt) return;
+  enviarMensagem(txt);
+  input.value = '';
+});
+$('btnBackHome').addEventListener('click', () => goTo('home'));
+
+// Estado inicial
+goTo('home');
+</script>
+</body>
+</html>
